@@ -52,12 +52,17 @@ function playBeep() {
   }
 }
 
+type CameraState = 'idle' | 'starting' | 'running' | 'error'
+
 export default function QrScanner({ projectId }: { projectId: string }) {
   const [entries, setEntries] = useState<MyScanEntry[]>([])
   const [error, setError] = useState<string | null>(null)
   const [manualCode, setManualCode] = useState('')
   const [manualPending, setManualPending] = useState(false)
+  const [cameraState, setCameraState] = useState<CameraState>('idle')
+  const [facingMode, setFacingMode] = useState<'environment' | 'user'>('environment')
   const lastCodeRef = useRef<{ code: string; time: number } | null>(null)
+  const html5QrcodeRef = useRef<import('html5-qrcode').Html5Qrcode | null>(null)
 
   const submitScan = useCallback(async (code: string) => {
     setError(null)
@@ -117,50 +122,106 @@ export default function QrScanner({ projectId }: { projectId: string }) {
     setManualCode('')
   }
 
-  useEffect(() => {
-    let scanner: import('html5-qrcode').Html5QrcodeScanner | null = null
-    let cancelled = false
-
-    async function start() {
-      const { Html5QrcodeScanner } = await import('html5-qrcode')
-      if (cancelled) return
-
-      scanner = new Html5QrcodeScanner(
-        READER_ELEMENT_ID,
-        { fps: 10, qrbox: { width: 250, height: 250 } },
-        /* verbose= */ false
-      )
-
-      scanner.render(handleScanSuccess, () => {
-        // 每個 frame 掃不到條碼都會呼叫這個 callback，屬於正常情況，不用處理。
-      })
-    }
-
-    async function handleScanSuccess(decodedText: string) {
+  const handleScanSuccess = useCallback(
+    (decodedText: string) => {
       const now = Date.now()
       const last = lastCodeRef.current
       if (last && last.code === decodedText && now - last.time < SAME_CODE_COOLDOWN_MS) {
         return
       }
       lastCodeRef.current = { code: decodedText, time: now }
-      await submitScan(decodedText)
+      submitScan(decodedText)
+    },
+    [submitScan]
+  )
+
+  const startCamera = useCallback(
+    async (mode: 'environment' | 'user') => {
+      setError(null)
+      setCameraState('starting')
+
+      try {
+        const { Html5Qrcode } = await import('html5-qrcode')
+
+        if (!html5QrcodeRef.current) {
+          html5QrcodeRef.current = new Html5Qrcode(READER_ELEMENT_ID)
+        }
+        const html5Qrcode = html5QrcodeRef.current
+
+        // 直接指定用後鏡頭（environment），不透過內建的鏡頭選單 UI，
+        // 這樣手機一鍵就能開始掃描，不用自己從清單挑要用哪支鏡頭。
+        await html5Qrcode.start(
+          { facingMode: { ideal: mode } },
+          { fps: 10, qrbox: { width: 250, height: 250 } },
+          handleScanSuccess,
+          () => {
+            // 每個 frame 掃不到條碼都會呼叫這個 callback，屬於正常情況，不用處理。
+          }
+        )
+
+        setFacingMode(mode)
+        setCameraState('running')
+      } catch {
+        setCameraState('error')
+        setError('無法開啟相機，請確認已允許瀏覽器使用相機權限')
+      }
+    },
+    [handleScanSuccess]
+  )
+
+  async function switchCamera() {
+    const html5Qrcode = html5QrcodeRef.current
+    if (html5Qrcode && html5Qrcode.isScanning) {
+      await html5Qrcode.stop().catch(() => {})
     }
+    await startCamera(facingMode === 'environment' ? 'user' : 'environment')
+  }
 
-    start()
-
+  useEffect(() => {
     return () => {
-      cancelled = true
-      if (scanner) {
-        scanner.clear().catch(() => {
-          // 元件卸載時鏡頭可能已經停止，clear() 失敗可以忽略。
+      const html5Qrcode = html5QrcodeRef.current
+      if (html5Qrcode && html5Qrcode.isScanning) {
+        html5Qrcode.stop().catch(() => {
+          // 元件卸載時鏡頭可能已經停止，stop() 失敗可以忽略。
         })
       }
     }
-  }, [submitScan])
+  }, [])
 
   return (
     <div className="flex flex-col gap-5">
-      <div id={READER_ELEMENT_ID} className="mx-auto w-full max-w-sm overflow-hidden rounded-lg" />
+      <div className="mx-auto w-full max-w-sm">
+        <div
+          id={READER_ELEMENT_ID}
+          className={cameraState === 'running' ? 'overflow-hidden rounded-lg' : 'hidden'}
+        />
+
+        {cameraState !== 'running' && (
+          <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed border-gray-300 px-4 py-10">
+            <button
+              type="button"
+              onClick={() => startCamera(facingMode)}
+              disabled={cameraState === 'starting'}
+              className="rounded-md bg-blue-600 px-5 py-3 text-base font-medium text-white disabled:opacity-50"
+            >
+              {cameraState === 'starting' ? '開啟相機中...' : '開始掃描（開啟相機）'}
+            </button>
+            {cameraState === 'error' && (
+              <p className="text-center text-sm text-red-600">請檢查瀏覽器的相機權限設定後再試一次</p>
+            )}
+          </div>
+        )}
+
+        {cameraState === 'running' && (
+          <button
+            type="button"
+            onClick={switchCamera}
+            className="mt-2 w-full rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700"
+          >
+            切換前後鏡頭（目前：{facingMode === 'environment' ? '後鏡頭' : '前鏡頭'}）
+          </button>
+        )}
+      </div>
 
       <form onSubmit={handleManualSubmit} className="flex flex-col gap-2">
         <label htmlFor="manual-code" className="text-sm font-medium text-gray-700">

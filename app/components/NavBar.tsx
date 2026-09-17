@@ -42,6 +42,9 @@ export default function NavBar({
         <Link href="/projects" className="underline hover:text-blue-600">
           切換專案
         </Link>
+        <Link href="/users" className="underline hover:text-blue-600">
+          使用者管理
+        </Link>
         <span>{session.name}</span>
         <form action={logout}>
           <button type="submit" className="text-gray-500 underline hover:text-red-600">

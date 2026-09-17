@@ -69,6 +69,21 @@ export default function InventoryTable({
     }
   }, [projectId])
 
+  async function handleDeleteScan(scan: ScanRecord) {
+    if (!window.confirm(`確定要刪除條碼「${scan.code}」的所有紀錄嗎？這個動作無法復原。`)) {
+      return
+    }
+
+    try {
+      const res = await fetch(`/api/scan/code/${scan._id}`, { method: 'DELETE' })
+      if (res.ok) {
+        setScans((prev) => prev.filter((s) => s._id !== scan._id))
+      }
+    } catch {
+      // 刪除失敗就不動畫面，等下一次輪詢自然同步回正確狀態。
+    }
+  }
+
   const totalUniqueCodes = scans.length
   const totalScanEvents = scans.reduce((sum, s) => sum + s.totalCount, 0)
 
@@ -93,6 +108,7 @@ export default function InventoryTable({
               <th className="px-4 py-2 font-medium">掃描次數</th>
               <th className="px-4 py-2 font-medium">掃描過的人</th>
               <th className="px-4 py-2 font-medium">最後掃描時間</th>
+              <th className="px-4 py-2 font-medium">操作</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
@@ -114,13 +130,22 @@ export default function InventoryTable({
                   </td>
                   <td className="px-4 py-2 text-gray-600">{scannerNames.join('、')}</td>
                   <td className="px-4 py-2 text-gray-500">{formatTime(scan.lastScannedAt)}</td>
+                  <td className="px-4 py-2">
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteScan(scan)}
+                      className="rounded-md border border-red-200 px-3 py-1 text-xs font-medium text-red-600"
+                    >
+                      刪除
+                    </button>
+                  </td>
                 </tr>
               )
             })}
 
             {scans.length === 0 && (
               <tr>
-                <td colSpan={4} className="px-4 py-8 text-center text-gray-400">
+                <td colSpan={5} className="px-4 py-8 text-center text-gray-400">
                   還沒有任何掃描記錄
                 </td>
               </tr>

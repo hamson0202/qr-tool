@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { decrypt } from '@/app/lib/session'
 
-const protectedRoutes = ['/projects']
+const protectedRoutes = ['/projects', '/users']
 const authRoutes = ['/login', '/register']
 
 export async function proxy(req: NextRequest) {
@@ -24,5 +24,5 @@ export async function proxy(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/projects/:path*', '/login', '/register'],
+  matcher: ['/projects/:path*', '/users/:path*', '/login', '/register'],
 }

@@ -64,6 +64,7 @@ export default function QrScanner({ projectId }: { projectId: string }) {
   const lastCodeRef = useRef<{ code: string; time: number } | null>(null)
   const html5QrcodeRef = useRef<import('html5-qrcode').Html5Qrcode | null>(null)
   const Html5QrcodeClassRef = useRef<typeof import('html5-qrcode').Html5Qrcode | null>(null)
+  const camerasRef = useRef<import('html5-qrcode').CameraDevice[] | null>(null)
 
   // 元件一掛載就先背景載入 html5-qrcode，讓使用者按下「開始掃描」的當下，
   // 呼叫相機的動作能盡量同步接在點擊事件後面，不要中間插一個 await import()。
@@ -165,10 +166,28 @@ export default function QrScanner({ projectId }: { projectId: string }) {
         }
         const html5Qrcode = html5QrcodeRef.current
 
-        // 直接指定用後鏡頭（environment），不透過內建的鏡頭選單 UI，
-        // 這樣手機一鍵就能開始掃描，不用自己從清單挑要用哪支鏡頭。
+        // 用「列舉鏡頭清單 + 依名稱挑選」的方式啟動（用 deviceId 指定，
+        // 而不是用 facingMode 參數）。facingMode 這個 constraint 在部分
+        // iOS Safari 版本上不穩定，反而是列舉裝置後用 deviceId 啟動比較可靠。
+        let cameras = camerasRef.current
+        if (!cameras || cameras.length === 0) {
+          cameras = await Html5Qrcode.getCameras()
+          camerasRef.current = cameras
+        }
+
+        if (!cameras || cameras.length === 0) {
+          throw new Error('找不到任何可用的相機')
+        }
+
+        const backCamera = cameras.find((c) => /back|rear|environment|後/i.test(c.label))
+        const frontCamera = cameras.find((c) => /front|user|自拍|前/i.test(c.label))
+        const camera =
+          mode === 'environment'
+            ? (backCamera ?? cameras[cameras.length - 1])
+            : (frontCamera ?? cameras[0])
+
         await html5Qrcode.start(
-          { facingMode: { ideal: mode } },
+          camera.id,
           { fps: 10, qrbox: { width: 250, height: 250 } },
           handleScanSuccess,
           () => {
@@ -178,9 +197,10 @@ export default function QrScanner({ projectId }: { projectId: string }) {
 
         setFacingMode(mode)
         setCameraState('running')
-      } catch {
+      } catch (err) {
         setCameraState('error')
-        setError('無法開啟相機，請確認已允許瀏覽器使用相機權限')
+        const detail = err instanceof Error ? err.message : String(err)
+        setError(`無法開啟相機，請確認已允許瀏覽器使用相機權限（${detail}）`)
       }
     },
     [handleScanSuccess]

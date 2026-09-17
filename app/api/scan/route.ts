@@ -2,6 +2,44 @@ import { NextRequest, NextResponse } from 'next/server'
 import { connectDB } from '@/app/lib/mongodb'
 import { Scan } from '@/app/models/Scan'
 import { getSessionOrNull } from '@/app/lib/dal'
+import type { SessionPayload } from '@/app/lib/session'
+
+const MAX_UPSERT_RETRIES = 3
+
+function isDuplicateKeyError(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && 'code' in err && (err as { code?: number }).code === 11000
+}
+
+// 兩個人「同一瞬間」第一次掃到同一個全新條碼時，MongoDB 的 upsert 在極少數情況下
+// 還是可能讓其中一邊撞到 duplicate key 錯誤（這是官方文件記載的已知邊界情況，
+// 不是我們邏輯寫錯）。這裡在撞到的時候重試：對方那筆這時候已經建立好了，
+// 重試時就會變成單純的更新（累加次數），不會再撞第二次。
+async function upsertScan(projectId: string, code: string, session: SessionPayload, now: Date) {
+  const update = {
+    $inc: { totalCount: 1 },
+    $push: {
+      scannedBy: {
+        userId: session.userId,
+        username: session.username,
+        name: session.name,
+        scannedAt: now,
+      },
+    },
+    $set: { lastScannedAt: now },
+    $setOnInsert: { firstScannedAt: now },
+  }
+
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await Scan.findOneAndUpdate({ projectId, code }, update, { upsert: true, new: true })
+    } catch (err) {
+      if (isDuplicateKeyError(err) && attempt < MAX_UPSERT_RETRIES) {
+        continue
+      }
+      throw err
+    }
+  }
+}
 
 export async function GET(request: NextRequest) {
   const session = await getSessionOrNull()
@@ -45,23 +83,12 @@ export async function POST(request: NextRequest) {
   // (projectId, code) 是複合唯一值，同一個專案內重複掃描同一個條碼會命中同一筆文件，
   // 用 $inc 累加次數、$push 記錄是誰在什麼時候掃的，藉此把重複掃描「合併」成一筆。
   // 不同專案就算條碼內容一樣，也會各自獨立一筆，不會互相汙染。
-  const scan = await Scan.findOneAndUpdate(
-    { projectId, code },
-    {
-      $inc: { totalCount: 1 },
-      $push: {
-        scannedBy: {
-          userId: session.userId,
-          username: session.username,
-          name: session.name,
-          scannedAt: now,
-        },
-      },
-      $set: { lastScannedAt: now },
-      $setOnInsert: { firstScannedAt: now },
-    },
-    { upsert: true, new: true }
-  )
+  let scan
+  try {
+    scan = await upsertScan(projectId, code, session, now)
+  } catch {
+    return NextResponse.json({ error: '掃描時發生衝突，請再試一次' }, { status: 409 })
+  }
 
   // $push 一定會把新項目加到陣列最後面，所以這裡拿到的就是剛剛新增的那一筆事件。
   const event = scan.scannedBy[scan.scannedBy.length - 1]

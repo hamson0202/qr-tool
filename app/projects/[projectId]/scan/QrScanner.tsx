@@ -63,6 +63,17 @@ export default function QrScanner({ projectId }: { projectId: string }) {
   const [facingMode, setFacingMode] = useState<'environment' | 'user'>('environment')
   const lastCodeRef = useRef<{ code: string; time: number } | null>(null)
   const html5QrcodeRef = useRef<import('html5-qrcode').Html5Qrcode | null>(null)
+  const Html5QrcodeClassRef = useRef<typeof import('html5-qrcode').Html5Qrcode | null>(null)
+
+  // 元件一掛載就先背景載入 html5-qrcode，讓使用者按下「開始掃描」的當下，
+  // 呼叫相機的動作能盡量同步接在點擊事件後面，不要中間插一個 await import()。
+  // iOS Safari 對「這是不是使用者直接觸發的操作」判定很嚴格，
+  // 點擊後才 await 載入模組，常常會讓它判定成不是使用者手勢，直接擋掉相機權限。
+  useEffect(() => {
+    import('html5-qrcode').then((mod) => {
+      Html5QrcodeClassRef.current = mod.Html5Qrcode
+    })
+  }, [])
 
   const submitScan = useCallback(async (code: string) => {
     setError(null)
@@ -141,7 +152,13 @@ export default function QrScanner({ projectId }: { projectId: string }) {
       setCameraState('starting')
 
       try {
-        const { Html5Qrcode } = await import('html5-qrcode')
+        // 正常情況下模組在掛載時就已經背景載入完成，這裡不需要再 await；
+        // 只有極少數「使用者手速太快、模組還沒載完」的情況才會真的等待。
+        let Html5Qrcode = Html5QrcodeClassRef.current
+        if (!Html5Qrcode) {
+          Html5Qrcode = (await import('html5-qrcode')).Html5Qrcode
+          Html5QrcodeClassRef.current = Html5Qrcode
+        }
 
         if (!html5QrcodeRef.current) {
           html5QrcodeRef.current = new Html5Qrcode(READER_ELEMENT_ID)

@@ -227,14 +227,14 @@ export default function QrScanner({ projectId }: { projectId: string }) {
 
   return (
     <div className="flex flex-col gap-5">
-      <div className="mx-auto w-full max-w-sm">
-        <div
-          id={READER_ELEMENT_ID}
-          className={cameraState === 'running' ? 'overflow-hidden rounded-lg' : 'hidden'}
-        />
+      <div className="relative mx-auto w-full max-w-sm">
+        {/* 這個容器不管有沒有在掃描都要保留真正的版面空間（不能用 display:none 縮成 0），
+            因為 html5-qrcode 是在呼叫 start() 的當下量測容器尺寸來建立畫面，
+            容器當時如果是 0 大小，畫面就會是空的，就算之後再顯示出來也救不回來。 */}
+        <div id={READER_ELEMENT_ID} className="min-h-[280px] w-full overflow-hidden rounded-lg bg-black" />
 
         {cameraState !== 'running' && (
-          <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed border-gray-300 px-4 py-10">
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-gray-300 bg-white px-4">
             <button
               type="button"
               onClick={() => startCamera(facingMode)}
